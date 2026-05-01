@@ -1,0 +1,11 @@
+.git
+.env
+.svn
+config.php
+phpinfo.php
+admin
+login
+manage
+wp-admin
+backup.zip
+www.tar.gz
