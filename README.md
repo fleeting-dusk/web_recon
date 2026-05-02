@@ -62,7 +62,7 @@
 先准备 Python 3 环境，然后安装常用依赖：
 
 ```bash
-pip install requests beautifulsoup4 tqdm dnspython fake-useragent tenacity urllib3
+pip install -r requirements.txt
 ```
 
 ### 2. 配置 API
