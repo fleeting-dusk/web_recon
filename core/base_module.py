@@ -13,13 +13,14 @@ class BaseModule(ABC):
         self.results = []
         self.data_dir = DATA_DIR
         self.http = HttpClient()
+        self._timed_out = False
 
     def get_headers(self):
         """生成随机请求头"""
         return self.http.get_headers()
 
     def safe_request(self, url, timeout=15, **kwargs):
-        """封装的请求方法，供子类调用"""
+        """封装的请求方法，供子类统一使用 UA、超时和 TLS 配置。"""
         return self.http.get(url, timeout=timeout, **kwargs)
 
     @abstractmethod
@@ -27,6 +28,8 @@ class BaseModule(ABC):
         pass
 
     def log(self, message):
+        if getattr(self, "_timed_out", False):
+            return
         print(f"[*] [{self.module_name}] {message}")
 
     def resolve_data_path(self, filename):

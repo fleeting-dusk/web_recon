@@ -1,4 +1,5 @@
 from core.base_module import BaseModule
+from core.domain_utils import belongs_to_domain, extract_hostname
 
 class SubdomainCollector(BaseModule):
     def run(self, target):
@@ -25,8 +26,9 @@ class SubdomainCollector(BaseModule):
                     for name in names:
                         name = name.strip().lower()
                         # 过滤掉通配符和非目标域名的干扰项
-                        if "*" not in name and name.endswith(target):
-                            subdomains.add(name)
+                        host = extract_hostname(name)
+                        if "*" not in name and belongs_to_domain(host, target):
+                            subdomains.add(host)
                 
                 self.results = sorted(list(subdomains))
                 self.log(f"查询完成，共发现 {len(self.results)} 个唯一子域名。")

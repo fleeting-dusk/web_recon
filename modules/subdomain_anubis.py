@@ -1,4 +1,5 @@
 from core.base_module import BaseModule
+from core.domain_utils import belongs_to_domain, extract_hostname
 
 class Anubis(BaseModule):
     def run(self, target):
@@ -10,8 +11,9 @@ class Anubis(BaseModule):
             if res.status_code == 200:
                 data = res.json()
                 for sub in data:
-                    if sub.endswith(target):
-                        self.results.append(sub.lower())
+                    host = extract_hostname(sub)
+                    if belongs_to_domain(host, target):
+                        self.results.append(host)
                 
                 self.results = list(set(self.results))
                 self.log(f"查询完成，发现 {len(self.results)} 个子域名")

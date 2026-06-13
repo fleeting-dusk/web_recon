@@ -1,6 +1,7 @@
+import time
+
 import requests
 from fake_useragent import UserAgent
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 
 class HttpClient:
@@ -16,21 +17,46 @@ class HttpClient:
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/91.0.4472.124 Safari/537.36"
         )
+        try:
+            user_agent = self.ua.random if self.ua else default_ua
+        except Exception:
+            user_agent = default_ua
+
         return {
-            "User-Agent": self.ua.random if self.ua else default_ua,
+            "User-Agent": user_agent,
             "Accept": "application/json, text/javascript, */*; q=0.01",
             "Connection": "close",
         }
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=4, max=10),
-        retry=retry_if_exception_type(requests.exceptions.RequestException),
-        reraise=True,
-    )
-    def get(self, url, timeout=15, **kwargs):
+    def request(self, method, url, timeout=15, retries=0, retry_delay=1.0, **kwargs):
         headers = kwargs.pop("headers", self.get_headers())
-        response = requests.get(url, headers=headers, timeout=timeout, verify=False, **kwargs)
-        if response.status_code == 429:
-            raise requests.exceptions.RequestException("API Rate Limit (429)")
-        return response
+        verify = kwargs.pop("verify", False)
+        last_exc = None
+
+        for attempt in range(max(0, retries) + 1):
+            try:
+                return requests.request(
+                    method,
+                    url,
+                    headers=headers,
+                    timeout=timeout,
+                    verify=verify,
+                    **kwargs,
+                )
+            except requests.exceptions.RequestException as exc:
+                last_exc = exc
+                if attempt >= retries:
+                    raise
+                time.sleep(min(retry_delay * (2 ** attempt), 3.0))
+
+        raise last_exc
+
+    def get(self, url, timeout=15, retries=0, retry_delay=1.0, **kwargs):
+        return self.request(
+            "GET",
+            url,
+            timeout=timeout,
+            retries=retries,
+            retry_delay=retry_delay,
+            **kwargs,
+        )

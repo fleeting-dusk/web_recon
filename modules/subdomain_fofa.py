@@ -1,11 +1,26 @@
 import base64
 from core.base_module import BaseModule
-import config  # 导入刚才创建的配置
+from core.domain_utils import belongs_to_domain, extract_hostname
+
+try:
+    import config
+except ModuleNotFoundError:
+    config = None
 
 class FofaScanner(BaseModule):
     def run(self, target):
         # 1. 检查配置是否填写
-        invalid_markers = {"", "你的FOFA邮箱", "你的FOFA_API_KEY"}
+        if config is None:
+            self.log("跳过 FOFA 模块：未找到 config.py")
+            return []
+
+        invalid_markers = {
+            "",
+            "你的FOFA邮箱",
+            "你的FOFA_API_KEY",
+            "your-email@example.com",
+            "your-fofa-key",
+        }
         email = getattr(config, "FOFA_EMAIL", "").strip()
         key = getattr(config, "FOFA_KEY", "").strip()
         if email in invalid_markers or key in invalid_markers:
@@ -35,11 +50,11 @@ class FofaScanner(BaseModule):
                 for host in hosts:
                     # FOFA 返回的 host 可能是 https://sub.domain.com 或 sub.domain.com:8080
                     # 我们需要提取出纯域名
-                    clean_host = host.replace("https://", "").replace("http://", "").split(":")[0].strip("/")
-                    if clean_host.endswith(target):
+                    clean_host = extract_hostname(host)
+                    if belongs_to_domain(clean_host, target):
                         self.results.append(clean_host)
 
-                self.results = list(set(self.results)) # 去重
+                self.results = sorted(set(self.results))
                 self.log(f"FOFA 查询完成，发现 {len(self.results)} 个资产")
             else:
                 self.log(f"FOFA 请求失败，状态码: {res.status_code}")

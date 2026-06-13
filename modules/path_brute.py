@@ -1,6 +1,8 @@
 import random
+import re
 import string
 import threading
+from pathlib import Path
 from queue import Queue
 from urllib.parse import urlparse
 
@@ -25,8 +27,8 @@ BASELINE_PROBES = [
 SIZE_ABS_THRESHOLD = 150
 SIZE_RATIO_THRESHOLD = 0.08
 
-# 只记录这些状态码的结果
-INTERESTING_CODES = {200, 301, 302}
+# 只记录这些有资产识别意义的状态码
+INTERESTING_CODES = {200, 204, 301, 302, 401, 403, 405}
 
 def _random_str(length=10):
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
@@ -148,7 +150,8 @@ class PathBrute(BaseModule):
     def __init__(self):
         super().__init__()
         self.category = "path_scan"
-        self.thread_count = 30
+        self.thread_count = 10
+        self.max_paths = None
         self.dict_path = self.resolve_data_path("ai_studio_code.txt")
         self.headers = {
             "User-Agent": (
@@ -167,6 +170,17 @@ class PathBrute(BaseModule):
             "Fortigate": ["FortiGate", "Web Filter Block"],
             "Cloudflare": ["Cloudflare RAY ID", "cf-browser-verification"],
         }
+
+    def configure(self, dict_path=None, thread_count=None, max_paths=None):
+        if dict_path:
+            candidate = Path(dict_path)
+            if not candidate.is_absolute():
+                candidate = self.resolve_data_path(str(dict_path))
+            self.dict_path = candidate
+        if thread_count:
+            self.thread_count = max(1, int(thread_count))
+        if max_paths:
+            self.max_paths = max(1, int(max_paths))
 
     def identify_waf(self, content, headers):
         html_str = content.decode('utf-8', errors='ignore').lower()
@@ -239,9 +253,9 @@ class PathBrute(BaseModule):
                 elif baseline.is_false_positive(status, size, location):
                     pass
 
-                elif status == 200:
+                elif status in (200, 204, 401, 403, 405):
                     waf = self.identify_waf(res.content, res.headers)
-                    tag = f"WAF:{waf}" if waf else "200 OK"
+                    tag = self._build_result_tag(status, res, waf)
                     with self.results_lock:
                         self.results.append(f"{url} [{tag}] (Size:{size})")
 
@@ -270,16 +284,17 @@ class PathBrute(BaseModule):
 
     def run(self, alive_urls):
         self.results = []
-        if not self.dict_path.exists():
-            self.log("错误：找不到路径字典文件")
+        dict_path = self._resolve_dict_path()
+        if not dict_path.exists():
+            self.log(f"错误：找不到路径字典文件: {dict_path}")
             return []
 
-        with open(self.dict_path, 'r', encoding='utf-8') as f:
-            paths = [
-                line.strip()
-                for line in f
-                if line.strip() and not line.startswith('#')
-            ]
+        paths = self._load_paths(dict_path)
+        if self.max_paths:
+            paths = paths[: self.max_paths]
+        self.log(
+            f"本轮路径字典: {dict_path.name} | 路径数: {len(paths)} | 线程数: {self.thread_count}"
+        )
 
         # 基准探测
         self.log("正在对各站点进行基准行为探测...")
@@ -318,3 +333,53 @@ class PathBrute(BaseModule):
 
         self.log(f"路径扫描完成，发现 {len(self.results)} 个有效路径。")
         return self.results
+
+    def _resolve_dict_path(self):
+        if hasattr(self.dict_path, "exists"):
+            return self.dict_path
+        return self.resolve_data_path(str(self.dict_path))
+
+    @staticmethod
+    def _load_paths(dict_path):
+        seen = set()
+        paths = []
+        with open(dict_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                path = line.strip()
+                if not path or path.startswith('#'):
+                    continue
+                normalized = path.lstrip('/')
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+                paths.append(normalized)
+        return paths
+
+    def _build_result_tag(self, status, res, waf):
+        labels = [str(status)]
+        if waf:
+            labels.append(f"WAF:{waf}")
+
+        content_type = res.headers.get("Content-Type", "").split(";", 1)[0].strip()
+        if content_type:
+            labels.append(content_type)
+
+        title = self._extract_title(self._decoded_text(res))
+        if title:
+            labels.append(title[:30])
+
+        return " | ".join(labels)
+
+    @staticmethod
+    def _extract_title(text):
+        match = re.search(r"<title[^>]*>(.*?)</title>", text or "", re.I | re.S)
+        if not match:
+            return ""
+        return re.sub(r"\s+", " ", match.group(1)).strip()
+
+    @staticmethod
+    def _decoded_text(response):
+        encoding = (response.encoding or "").lower()
+        if not encoding or encoding in {"iso-8859-1", "windows-1252"}:
+            response.encoding = response.apparent_encoding or response.encoding
+        return response.text

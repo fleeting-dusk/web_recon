@@ -3,5 +3,4 @@ beautifulsoup4
 tqdm
 dnspython
 fake-useragent
-tenacity
 urllib3

@@ -1,0 +1,142 @@
+[
+  {
+    "id": "cas-unified-auth",
+    "info": {
+      "name": "统一身份认证/CAS",
+      "metadata": {"verified": true}
+    },
+    "http": [
+      {
+        "matchers": [
+          {"type": "word", "part": "title", "words": ["统一身份认证", "统一认证", "统一身份认证平台"]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "nuxt-js",
+    "info": {
+      "name": "Nuxt.js",
+      "metadata": {"verified": true}
+    },
+    "http": [
+      {
+        "matchers": [
+          {"type": "word", "condition": "or", "words": ["__NUXT__", "/_nuxt/", "nuxt-link"]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "vue-js",
+    "info": {
+      "name": "Vue.js",
+      "metadata": {"verified": true}
+    },
+    "http": [
+      {
+        "matchers": [
+          {"type": "word", "condition": "or", "words": ["vue-router", "vuex", "data-v-"]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "swagger-openapi",
+    "info": {
+      "name": "Swagger/OpenAPI",
+      "metadata": {"verified": true}
+    },
+    "http": [
+      {
+        "matchers": [
+          {"type": "word", "condition": "or", "words": ["swagger-ui", "swagger-ui-bundle", "openapi.json", "api-docs"]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "spring-boot-error",
+    "info": {
+      "name": "Spring Boot",
+      "metadata": {"verified": true}
+    },
+    "http": [
+      {
+        "matchers": [
+          {"type": "word", "condition": "or", "words": ["Whitelabel Error Page", "There was an unexpected error"]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "nginx-server",
+    "info": {
+      "name": "Nginx",
+      "metadata": {"verified": true}
+    },
+    "http": [
+      {
+        "matchers": [
+          {"type": "word", "part": "header", "words": ["server: nginx"]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "apache-tomcat",
+    "info": {
+      "name": "Apache Tomcat",
+      "metadata": {"verified": true}
+    },
+    "http": [
+      {
+        "matchers": [
+          {"type": "word", "condition": "or", "words": ["Apache Tomcat", "The requested resource is not available"]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "sangfor",
+    "info": {
+      "name": "深信服/Sangfor",
+      "metadata": {"verified": true}
+    },
+    "http": [
+      {
+        "matchers": [
+          {"type": "word", "condition": "or", "words": ["SANGFOR", "深信服", "sangfor-vd"]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "hikvision",
+    "info": {
+      "name": "海康威视/Hikvision",
+      "metadata": {"verified": true}
+    },
+    "http": [
+      {
+        "matchers": [
+          {"type": "word", "condition": "or", "words": ["Hikvision", "海康威视"]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "wisedu",
+    "info": {
+      "name": "金智教育/Wisedu",
+      "metadata": {"verified": true}
+    },
+    "http": [
+      {
+        "matchers": [
+          {"type": "word", "condition": "or", "words": ["wisedu", "金智教育", "/eportal/"]}
+        ]
+      }
+    ]
+  }
+]

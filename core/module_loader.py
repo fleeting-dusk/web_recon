@@ -31,7 +31,7 @@ class ModuleLoader:
                     if isinstance(attr, type) and issubclass(attr, BaseModule) and attr_name != "BaseModule":
                         instance = attr()
                         modules.append(instance)
-                        print(f" ✅ 加载成功: [{instance.module_name}]")
+                        print(f" [+] 加载成功: [{instance.module_name}]")
             except Exception as exc:
                 print(f" [!] 模块 {mod_name} 加载失败: {exc}")
 

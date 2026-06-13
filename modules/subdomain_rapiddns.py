@@ -1,4 +1,5 @@
 from core.base_module import BaseModule
+from core.domain_utils import belongs_to_domain, extract_hostname
 import re
 
 class RapidDNS(BaseModule):
@@ -12,7 +13,11 @@ class RapidDNS(BaseModule):
                 # 使用正则简单快速地抓取表格中的域名
                 pattern = r'<td>([\w\.-]+\.' + re.escape(target) + r')</td>'
                 found = re.findall(pattern, res.text)
-                self.results = list(set([item.lower() for item in found]))
+                self.results = sorted({
+                    extract_hostname(item)
+                    for item in found
+                    if belongs_to_domain(item, target)
+                })
                 self.log(f"RapidDNS 查询完成，发现 {len(self.results)} 个子域名")
         except Exception as e:
             self.log(f"RapidDNS 模块出错: {e}")

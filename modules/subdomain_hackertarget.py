@@ -1,4 +1,5 @@
 from core.base_module import BaseModule
+from core.domain_utils import belongs_to_domain, extract_hostname
 
 class HackerTarget(BaseModule):
     def run(self, target):
@@ -12,8 +13,8 @@ class HackerTarget(BaseModule):
                 lines = res.text.split('\n')
                 for line in lines:
                     if ',' in line:
-                        subdomain = line.split(',')[0].strip().lower()
-                        if subdomain and subdomain.endswith(target):
+                        subdomain = extract_hostname(line.split(',')[0])
+                        if belongs_to_domain(subdomain, target):
                             self.results.append(subdomain)
                 
                 self.results = list(set(self.results))
