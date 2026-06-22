@@ -1,14 +1,28 @@
+"""
+文件名: subdomain_fofa.py
+功能:   被动子域名收集模块——调用 FOFA 网络空间测绘引擎的 API，按 domain="目标"
+        检索目标的关联资产。需要在 config.py 中配置有效的 FOFA Email 与 Key；
+        未配置或配置无效时自动跳过，不影响其他模块。
+作者:   李豪
+版本:   v1.0
+创建时间: 2026-06
+"""
+
 import base64
 from core.base_module import BaseModule
 from core.domain_utils import belongs_to_domain, extract_hostname
 
+# 尝试导入密钥配置；若用户未创建 config.py 则置空，运行时优雅跳过本模块
 try:
     import config
 except ModuleNotFoundError:
     config = None
 
 class FofaScanner(BaseModule):
+    """通过 FOFA 测绘引擎 API 收集目标关联资产/子域名。"""
+
     def run(self, target):
+        """校验密钥 -> 构造并 Base64 编码查询语句 -> 请求 API -> 清洗出归属子域名。"""
         # 1. 检查配置是否填写
         if config is None:
             self.log("跳过 FOFA 模块：未找到 config.py")

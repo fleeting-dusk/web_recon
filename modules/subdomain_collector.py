@@ -1,8 +1,21 @@
+"""
+文件名: subdomain_collector.py
+功能:   被动子域名收集模块——通过 crt.sh 证书透明度日志（CT Log）查询目标域名
+        申请过的 SSL 证书，从证书的 name_value 字段中提取子域名。属于无侵入的
+        被动信息收集，不直接接触目标服务器。
+作者:   李豪
+版本:   v1.0
+创建时间: 2026-06
+"""
+
 from core.base_module import BaseModule
 from core.domain_utils import belongs_to_domain, extract_hostname
 
 class SubdomainCollector(BaseModule):
+    """通过 crt.sh 证书透明度日志收集子域名。"""
+
     def run(self, target):
+        """查询 crt.sh 的 JSON 接口，解析并过滤出归属目标的子域名列表。"""
         self.log(f"正在通过 crt.sh 查询 {target} 的子域名...")
         
         # 1. 构造查询 URL (输出格式为 JSON)

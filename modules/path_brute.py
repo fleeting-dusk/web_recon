@@ -1,3 +1,14 @@
+"""
+文件名: path_brute.py
+功能:   路径（目录/文件）爆破模块。核心亮点是「基准行为 + 误报过滤」：先用一批随机
+        不存在的路径探测站点对 404/通配/WAF 的真实反应，建立基准画像；再用字典爆破，
+        把状态码与 size/跳转落在基准范围内的响应判为误报丢弃，从而在存在通配响应或
+        WAF 的站点上仍能筛出真正有意义的路径。同时识别常见 WAF、过滤自跳转噪音。
+作者:   李豪
+版本:   v1.0
+创建时间: 2026-06
+"""
+
 import random
 import re
 import string
@@ -12,7 +23,7 @@ from tqdm import tqdm
 from core.base_module import BaseModule
 
 
-# 基准探测路径模板，覆盖不同路径格式
+# 基准探测路径模板，覆盖不同路径格式（{rnd} 会被替换为随机串，保证路径必然不存在）
 BASELINE_PROBES = [
     "/this_not_exist_{rnd}",
     "/wp-admin_{rnd}_fake",
@@ -31,10 +42,12 @@ SIZE_RATIO_THRESHOLD = 0.08
 INTERESTING_CODES = {200, 204, 301, 302, 401, 403, 405}
 
 def _random_str(length=10):
+    """生成随机字符串，用于拼出必然不存在的基准探测路径。"""
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
 
 def _sizes_similar(a, b):
+    """判断两个响应体大小是否相近（绝对差或比例差任一达标即认为相似）。"""
     diff = abs(a - b)
     if diff < SIZE_ABS_THRESHOLD:
         return True
@@ -61,11 +74,13 @@ class SiteBaseline:
         self.dominant_avg_size: float = 0
 
     def record(self, status, size, location=None):
+        """记录一次基准探测的结果（状态码、响应体大小、跳转目标）。"""
         self._samples.setdefault(status, []).append(size)
         if location:
             self._redirect_locations.setdefault(status, []).append(location)
 
     def finalize(self):
+        """汇总基准样本：为每个状态码算平均 size 与跳转签名，并判定是否存在通配状态码。"""
         if not self._samples:
             return
 
@@ -84,15 +99,15 @@ class SiteBaseline:
                 "avg_size": avg_size,
                 "location": location_signature,
             }
-            # 超过40%的探测都返回同一状态码 → 认为是通配
+            # 超过40%的探测都返回同一状态码 → 认为是通配（站点对不存在路径统一应答）
             if len(sizes) / total >= 0.4:
                 self.dominant_status = status
                 self.dominant_avg_size = avg_size
 
     def is_false_positive(self, status, size, location=None):
         """
-        判断响应是否是误报。
-        条件：状态码与基准中常见模板一致，且size或跳转模式匹配。
+        判断扫描中某个响应是否为误报。
+        条件：状态码与基准画像一致，且响应体大小相近、或跳转目标与基准一致。
         """
         profile = self.status_profiles.get(status)
         if not profile:
@@ -109,6 +124,7 @@ class SiteBaseline:
 
 
 def _most_common(items):
+    """返回列表中出现次数最多的元素（用于提取最常见的跳转目标作为基准签名）。"""
     counts = {}
     for item in items:
         counts[item] = counts.get(item, 0) + 1
@@ -116,6 +132,7 @@ def _most_common(items):
 
 
 def _normalize_location(location):
+    """把跳转目标 URL 归一化为「host+path+排序后的参数名」，便于跨请求比较是否同一跳转。"""
     if not location:
         return ""
     parsed = urlparse(location)
@@ -128,6 +145,7 @@ def _normalize_location(location):
 
 
 def _is_self_redirect_noise(request_url, location):
+    """判断是否为「跳转回自身同路径」的无意义跳转（同主机同路径），用于过滤噪音。"""
     if not location:
         return False
 
@@ -147,12 +165,14 @@ def _is_self_redirect_noise(request_url, location):
 
 
 class PathBrute(BaseModule):
+    """带基准误报过滤与 WAF 识别的路径爆破模块。"""
+
     def __init__(self):
         super().__init__()
         self.category = "path_scan"
-        self.thread_count = 10
-        self.max_paths = None
-        self.dict_path = self.resolve_data_path("ai_studio_code.txt")
+        self.thread_count = 10                 # 爆破线程数（默认较保守，降低冲击）
+        self.max_paths = None                  # 每站最大路径数，None 表示用完整字典
+        self.dict_path = self.resolve_data_path("ai_studio_code.txt")  # 默认路径字典
         self.headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -172,6 +192,7 @@ class PathBrute(BaseModule):
         }
 
     def configure(self, dict_path=None, thread_count=None, max_paths=None):
+        """由控制器下发的可选配置：自定义字典路径、线程数、每站最大路径数。"""
         if dict_path:
             candidate = Path(dict_path)
             if not candidate.is_absolute():
@@ -183,6 +204,7 @@ class PathBrute(BaseModule):
             self.max_paths = max(1, int(max_paths))
 
     def identify_waf(self, content, headers):
+        """根据响应正文/响应头中的特征关键字识别 WAF 厂商，命中返回名称否则 None。"""
         html_str = content.decode('utf-8', errors='ignore').lower()
         header_str = str(headers).lower()
         for waf_name, keywords in self.waf_signatures.items():
@@ -196,6 +218,7 @@ class PathBrute(BaseModule):
     # ------------------------------------------------------------------
 
     def get_baseline(self, base_url):
+        """对单个站点发起一组随机不存在路径的探测，建立其「正常的不存在响应」基准画像。"""
         baseline = SiteBaseline()
         url_base = base_url.rstrip('/')
 
@@ -226,9 +249,15 @@ class PathBrute(BaseModule):
     # ------------------------------------------------------------------
 
     def scan_worker(self, q, pbar):
+        """
+        爆破工作线程：逐个请求「站点 + 字典路径」，对响应做误报过滤与分类。
+        - 命中基准画像 → 误报，丢弃；
+        - 200/204/401/403/405 → 记为有效路径（附带 WAF/标题/类型标签）；
+        - 301/302 → 过滤自跳转等噪音后记录跳转目标。
+        """
         while True:
             task = q.get()
-            if task is None:
+            if task is None:  # 哨兵值，退出线程
                 q.task_done()
                 break
 
@@ -283,6 +312,10 @@ class PathBrute(BaseModule):
     # ------------------------------------------------------------------
 
     def run(self, alive_urls):
+        """
+        路径爆破主流程：加载字典 -> 为每个站点建立基准画像 -> 多线程笛卡尔积爆破 ->
+        汇总有效路径。alive_urls 为待爆破的真实站点 URL 列表。
+        """
         self.results = []
         dict_path = self._resolve_dict_path()
         if not dict_path.exists():
@@ -335,12 +368,14 @@ class PathBrute(BaseModule):
         return self.results
 
     def _resolve_dict_path(self):
+        """把字典路径统一解析为 Path 对象（已是 Path 直接返回，否则按 data/ 解析）。"""
         if hasattr(self.dict_path, "exists"):
             return self.dict_path
         return self.resolve_data_path(str(self.dict_path))
 
     @staticmethod
     def _load_paths(dict_path):
+        """读取路径字典：去除空行/注释行、去掉前导斜杠并去重，返回路径列表。"""
         seen = set()
         paths = []
         with open(dict_path, 'r', encoding='utf-8') as f:
@@ -356,6 +391,7 @@ class PathBrute(BaseModule):
         return paths
 
     def _build_result_tag(self, status, res, waf):
+        """为有效路径拼装展示标签：状态码 + WAF + Content-Type + 页面标题。"""
         labels = [str(status)]
         if waf:
             labels.append(f"WAF:{waf}")
@@ -372,6 +408,7 @@ class PathBrute(BaseModule):
 
     @staticmethod
     def _extract_title(text):
+        """从 HTML 中正则提取 <title> 文本并压缩空白，无标题返回空串。"""
         match = re.search(r"<title[^>]*>(.*?)</title>", text or "", re.I | re.S)
         if not match:
             return ""
@@ -379,6 +416,7 @@ class PathBrute(BaseModule):
 
     @staticmethod
     def _decoded_text(response):
+        """智能解码响应正文，避免编码缺失/误判导致的中文乱码。"""
         encoding = (response.encoding or "").lower()
         if not encoding or encoding in {"iso-8859-1", "windows-1252"}:
             response.encoding = response.apparent_encoding or response.encoding

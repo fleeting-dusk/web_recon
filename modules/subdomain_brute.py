@@ -1,3 +1,15 @@
+"""
+文件名: subdomain_brute.py
+功能:   主动子域名收集模块——基于字典的 DNS 递归爆破。核心特点：
+        1) 泛解析检测：识别「任意子域名都能解析」的干扰，按 IP/C段 过滤误报；
+        2) 多层递归：第 1 层用大字典，对存活结果再用小字典向下爆破，逐层深入；
+        3) 第 1 层加 HTTP 存活过滤，只保留存活域名作为下一层父域名，控制爆炸式增长。
+        属于「主动」类别（category=active），受运行场景的并发策略约束。
+作者:   李豪
+版本:   v1.0
+创建时间: 2026-06
+"""
+
 import random
 import string
 import threading
@@ -11,7 +23,7 @@ from tqdm import tqdm
 
 from core.base_module import BaseModule
 
-# 泛解析探测次数
+# 泛解析探测次数：用多个随机子域名探测，超过半数能解析则判定为泛解析
 WILDCARD_PROBE_COUNT = 5
 
 # 第1层存活检测并发数
@@ -22,27 +34,32 @@ ALIVE_CHECK_TIMEOUT = 5
 
 
 def _make_resolver():
+    """创建一个 DNS 解析器，指定公共 DNS 并设置较短超时，适配高并发爆破。"""
     r = dns.resolver.Resolver()
     r.nameservers = ['8.8.8.8', '114.114.114.114', '223.5.5.5']
-    r.timeout = 1
-    r.lifetime = 2
+    r.timeout = 1   # 单次查询超时
+    r.lifetime = 2  # 整体查询最长耗时
     return r
 
 
 def _random_label(length=16):
+    """生成随机域名标签，用于泛解析探测（正常情况下不可能被解析）。"""
     return ''.join(random.choices(string.ascii_lowercase, k=length))
 
 
 def _ip_to_cseg(ip):
+    """提取 IP 的前三段作为 C 段标识，用于泛解析的 C 段轮询判断。"""
     return ".".join(ip.split(".")[:3])
 
 
 class RecursiveBrute(BaseModule):
+    """递归式 DNS 子域名爆破模块。"""
+
     def __init__(self):
         super().__init__()
-        self.category = "active"
-        self.thread_count = 60
-        self.max_depth = 3
+        self.category = "active"   # 主动模块，受场景并发策略控制
+        self.thread_count = 60     # 爆破线程数
+        self.max_depth = 3         # 最大递归层数
 
         self.main_dict = self.resolve_data_path("subdomains-200.txt")
         self.mini_dict = [
@@ -60,6 +77,12 @@ class RecursiveBrute(BaseModule):
     # ------------------------------------------------------------------
 
     def get_wildcard_info(self, domain, resolver):
+        """
+        探测某父域名是否存在泛解析，并记录泛解析对应的 IP 集合与 C 段集合。
+
+        逻辑: 用多个随机标签拼成不存在的子域名去解析，能解析的次数过半即判为泛解析。
+              结果带锁缓存，避免重复探测同一父域名。
+        """
         with self.wildcard_cache_lock:
             if domain in self.wildcard_cache:
                 return self.wildcard_cache[domain]
@@ -93,12 +116,16 @@ class RecursiveBrute(BaseModule):
         return result
 
     def is_wildcard_hit(self, resolved_ips, wildcard_info):
+        """
+        判断某次解析结果是否「命中泛解析」（即属于干扰、应丢弃）。
+        当解析到的 IP 集合或其 C 段集合完全落在泛解析记录内时，视为命中。
+        """
         if not wildcard_info["is_wildcard"]:
             return False
         resolved_csegs = {_ip_to_cseg(ip) for ip in resolved_ips}
-        if resolved_ips <= wildcard_info["ips"]:
+        if resolved_ips <= wildcard_info["ips"]:       # IP 全在泛解析 IP 池中
             return True
-        if resolved_csegs <= wildcard_info["csegs"]:
+        if resolved_csegs <= wildcard_info["csegs"]:   # C 段全在泛解析 C 段中
             return True
         return False
 
@@ -129,6 +156,7 @@ class RecursiveBrute(BaseModule):
     def _alive_filter(self, domains, desc="存活检测"):
         """
         对域名列表做HTTP存活过滤，返回存活的域名列表。
+        用线程池并发探测，仅保留能建立 HTTP/HTTPS 连接的域名。
         """
         if not domains:
             return []
@@ -163,16 +191,17 @@ class RecursiveBrute(BaseModule):
     # ------------------------------------------------------------------
 
     def worker(self, q, pbar):
+        """爆破工作线程：从队列取 (父域名, 字典词) 拼成子域名解析，命中且非泛解析则记录。"""
         resolver = _make_resolver()
 
         while True:
             task = q.get()
-            if task is None:
+            if task is None:  # 哨兵值，退出线程
                 q.task_done()
                 break
 
             parent, sub = task
-            target = f"{sub}.{parent}"
+            target = f"{sub}.{parent}"  # 拼接待验证的子域名
             try:
                 wildcard_info = self.get_wildcard_info(parent, resolver)
                 answers = resolver.resolve(target, 'A')
@@ -195,10 +224,14 @@ class RecursiveBrute(BaseModule):
     # ------------------------------------------------------------------
 
     def _run_layer(self, parents, word_list, depth):
+        """
+        执行单层 DNS 爆破：对所有父域名 × 字典词组合并发解析。
+        返回本层「相对爆破前快照」新增的域名，便于判断是否还要继续递归。
+        """
         q = Queue()
         for p in parents:
             for s in word_list:
-                q.put((p, s))
+                q.put((p, s))  # 笛卡尔积入队：每个父域名搭配每个字典词
 
         if q.qsize() == 0:
             return []
@@ -234,6 +267,10 @@ class RecursiveBrute(BaseModule):
     # ------------------------------------------------------------------
 
     def run(self, target):
+        """
+        爆破主流程：读取字典 -> 检测根域名泛解析 -> 逐层递归爆破。
+        第 1 层用完整字典并做存活过滤，第 2/3 层用精简字典直接以 DNS 结果为父域名。
+        """
         if not self.main_dict.exists():
             self.log("错误：找不到主字典文件")
             return []

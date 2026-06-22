@@ -1,3 +1,16 @@
+"""
+文件名: app_asset_discovery.py
+功能:   App 资产线索发现模块。从存活站点的页面与关联文件中，挖掘其移动端 App 的线索：
+        - 页面链接中的 APK 下载、App Store/应用市场跳转；
+        - Web App Manifest 里的 related_applications / PWA 信息；
+        - /.well-known/assetlinks.json（Android 应用关联）；
+        - apple-app-site-association（iOS 通用链接）。
+        最后对多来源线索做合并、置信度加权与强类型过滤。
+作者:   李豪
+版本:   v1.0
+创建时间: 2026-06
+"""
+
 import json
 import re
 from urllib.parse import urljoin, urlparse
@@ -8,11 +21,16 @@ from core.base_module import BaseModule
 from core.models import AppAssetRecord
 
 
+# 匹配 .apk 下载链接
 APK_PATTERN = re.compile(r"\.apk(?:$|[?#])", re.I)
+# 从苹果商店链接中提取数字 AppID（形如 /id123456789）
 APPLE_APP_ID_PATTERN = re.compile(r"/id(\d{5,})", re.I)
 
 
 class AppAssetDiscovery(BaseModule):
+    """App 资产线索发现模块。"""
+
+    # 强类型线索：只有这些「可信度高」的资产类型才会进入最终结果
     STRONG_ASSET_TYPES = {
         "APK下载",
         "App Store",

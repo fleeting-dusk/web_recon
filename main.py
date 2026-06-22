@@ -1,3 +1,13 @@
+"""
+文件名: main.py
+功能:   程序主入口（命令行版）。负责解析丰富的命令行参数、提供运行场景交互选择、
+        处理 --safe-test 低冲击模式，最终组装成 ScanOptions 并调用 run_scan 启动扫描。
+        不带参数或带 --tui 时则转入终端交互界面 tui.py。
+作者:   李豪
+版本:   v3.0
+创建时间: 2026-06
+"""
+
 import argparse
 import sys
 from pathlib import Path
@@ -5,6 +15,7 @@ from pathlib import Path
 # 屏蔽 HTTPS 警告
 import urllib3
 
+# 把项目根目录加入模块搜索路径，保证 import core.* 可用
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
@@ -15,6 +26,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def choose_scenario():
+    """交互式让用户选择运行场景（1/2/3），回车默认场景 3；返回场景编号。"""
     print("[*] 请选择运行场景:")
     print("    1. 场景一：不使用主动收集，只能用被动收集")
     print("    2. 场景二：都可以用，但是主动收集要限制并发数")
@@ -30,6 +42,8 @@ def choose_scenario():
 
 
 def main():
+    """主流程：无参数或带 --tui 时进入交互界面；否则解析命令行参数后执行扫描。"""
+    # 不带任何参数 / 显式 --tui：直接进入终端交互界面
     if len(sys.argv) == 1 or "--tui" in sys.argv[1:]:
         from tui import main as tui_main
 
@@ -190,6 +204,7 @@ def main():
     if not args.target:
         parser.error("必须传入 -t/--target，或使用 --tui 启动终端交互界面。")
 
+    # 低冲击验证模式：强制收紧各项限制并关闭主动扫描，适合在授权范围内做安全演示
     if args.safe_test:
         if args.scenario is None:
             args.scenario = 1
@@ -201,6 +216,7 @@ def main():
         args.skip_js_discovery = True
         args.verify_js_findings = False
 
+    # 未通过参数指定场景时，转为交互式选择
     scenario = args.scenario if args.scenario is not None else choose_scenario()
 
     options = ScanOptions(

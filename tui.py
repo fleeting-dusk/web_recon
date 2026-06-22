@@ -1,3 +1,13 @@
+"""
+文件名: tui.py
+功能:   终端交互界面（Text User Interface）。为不熟悉命令行参数的使用者提供菜单式
+        操作：内置 5 种预设扫描模式，并通过一系列 ask_* 辅助函数引导用户逐项输入/
+        确认参数，最终调用 run_scan 执行。是 main.py 的「友好交互」替代入口。
+作者:   李豪
+版本:   v3.0
+创建时间: 2026-06
+"""
+
 import os
 import sys
 from dataclasses import replace
@@ -5,6 +15,7 @@ from pathlib import Path
 
 import urllib3
 
+# 把项目根目录加入模块搜索路径，保证 import core.* 可用
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
@@ -24,6 +35,8 @@ BANNER = r"""
 """
 
 
+# 预设模式表: 编号 -> (模式名称, 对应的 ScanOptions 参数组合)
+# 每个预设是一套调好的参数，覆盖从「轻量存活探测」到「JS 收集+验证」等典型场景
 PRESETS = {
     "1": (
         "低冲击存活+指纹",
@@ -119,6 +132,7 @@ PRESETS = {
 
 
 def main():
+    """TUI 主循环：展示菜单 -> 选择预设 -> 补充/自定义参数 -> 确认 -> 运行 -> 是否继续。"""
     while True:
         clear_screen()
         print(BANNER)
@@ -136,11 +150,11 @@ def main():
             continue
 
         preset_name, preset = PRESETS[choice]
-        options = replace(preset)
+        options = replace(preset)  # 复制一份预设，避免修改全局 PRESETS
         print(f"\n当前模式: {preset_name}")
-        options = ask_common_options(options)
+        options = ask_common_options(options)  # 询问通用参数（目标、线程数等）
         if choice == "5":
-            options = ask_custom_options(options)
+            options = ask_custom_options(options)  # 模式 5 额外询问全部细化参数
 
         print_summary(options)
         if not ask_bool("确认开始运行", default=True):
@@ -153,6 +167,7 @@ def main():
 
 
 def ask_common_options(options):
+    """询问所有模式都需要的通用参数，返回更新后的 options。"""
     target = ask_text("目标域名", options.target)
     output_dir = ask_text("报告输出目录", options.output_dir)
     max_subdomains = ask_int("最多探测子域名数，0 表示不限制", options.max_subdomains, minimum=0)
@@ -168,6 +183,7 @@ def ask_common_options(options):
 
 
 def ask_custom_options(options):
+    """「自定义参数」模式下，逐项询问场景、各扫描开关及其细化参数，返回更新后的 options。"""
     scenario = ask_choice("运行场景 1=仅被动 2=主动限并发 3=不限制", {"1", "2", "3"}, str(options.scenario))
     options = replace(
         options,
@@ -216,6 +232,7 @@ def ask_custom_options(options):
 
 
 def print_summary(options):
+    """运行前打印参数清单，供用户最终核对。"""
     print("\n运行确认：")
     print(f"  target: {options.target}")
     print(f"  scenario: {options.scenario}")
@@ -231,18 +248,25 @@ def print_summary(options):
     print(f"  exclude_modules: {options.exclude_modules or '无'}")
 
 
+# ----------------------------------------------------------------------
+# 以下为一组输入辅助函数：统一处理「显示默认值、回车取默认、非法输入重试」的交互
+# ----------------------------------------------------------------------
+
 def ask_text(label, default):
+    """询问文本，回车则返回默认值。"""
     value = read_input(f"{label} [{default}]: ").strip()
     return value or default
 
 
 def ask_optional_text(label, default):
+    """询问可选文本（默认可为空），回车则保留原默认值。"""
     default_text = default if default is not None else "空"
     value = read_input(f"{label} [{default_text}]: ").strip()
     return value or default
 
 
 def ask_int(label, default, minimum=None):
+    """询问整数，校验下限，非法输入循环重试，回车取默认值。"""
     while True:
         raw = read_input(f"{label} [{default}]: ").strip()
         if not raw:
@@ -259,6 +283,7 @@ def ask_int(label, default, minimum=None):
 
 
 def ask_optional_int(label, default, minimum=None):
+    """询问可选整数（默认可为 None），回车保留默认值。"""
     default_text = default if default is not None else "空"
     while True:
         raw = read_input(f"{label} [{default_text}]: ").strip()
@@ -276,6 +301,7 @@ def ask_optional_int(label, default, minimum=None):
 
 
 def ask_float(label, default, minimum=None):
+    """询问浮点数，校验下限，非法输入循环重试。"""
     while True:
         raw = read_input(f"{label} [{default}]: ").strip()
         if not raw:
@@ -292,6 +318,7 @@ def ask_float(label, default, minimum=None):
 
 
 def ask_choice(label, choices, default):
+    """询问枚举值，只接受 choices 集合内的输入。"""
     while True:
         value = read_input(f"{label} [{default}]: ").strip() or default
         if value in choices:
@@ -300,6 +327,7 @@ def ask_choice(label, choices, default):
 
 
 def ask_bool(label, default=False):
+    """询问是/否，兼容 y/n、yes/no、是/否 等多种写法。"""
     suffix = "Y/n" if default else "y/N"
     while True:
         value = read_input(f"{label} [{suffix}]: ").strip().lower()
@@ -313,16 +341,19 @@ def ask_bool(label, default=False):
 
 
 def pause(message):
+    """打印提示并等待用户回车，用于停顿展示信息。"""
     read_input(f"{message} 按回车继续...")
 
 
 def clear_screen():
+    """清屏（仅在真实终端下执行，重定向输出时跳过以免乱码）。"""
     if not sys.stdout.isatty():
         return
     os.system("cls" if os.name == "nt" else "clear")
 
 
 def read_input(prompt):
+    """统一的输入读取：捕获 Ctrl+D（EOF）时优雅退出程序。"""
     try:
         return input(prompt)
     except EOFError:

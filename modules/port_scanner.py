@@ -1,3 +1,14 @@
+"""
+文件名: port_scanner.py
+功能:   端口扫描模块。区别于「连上就报开放」的简单扫描，本模块按端口类型分别做
+        协议级验证：HTTP 端口发探测包看状态码、Banner 端口收服务标识、数据库等高危
+        端口（MSSQL/PostgreSQL/RDP/SMB/MongoDB/Oracle 等）发对应协议握手包校验响应特征，
+        Redis/ZooKeeper/Memcached 校验协议应答。以此大幅降低防火墙转发造成的误报。
+作者:   李豪
+版本:   v1.0
+创建时间: 2026-06
+"""
+
 import socket
 import struct
 import threading
@@ -9,7 +20,7 @@ from core.base_module import BaseModule
 
 
 # -----------------------------------------------------------------------
-# 端口分类
+# 端口分类：按验证方式把目标端口划分为四类，分别采用不同的探测策略
 # -----------------------------------------------------------------------
 
 # HTTP类端口：发HTTP探测包，有响应才算开放
@@ -240,10 +251,13 @@ HANDSHAKE_VERIFIERS = {
 # -----------------------------------------------------------------------
 
 class PortScanner(BaseModule):
+    """带协议验证的端口扫描模块。"""
+
     def __init__(self):
         super().__init__()
         self.category = "port_scan"
         self.thread_count = 50
+        # 待扫描端口 = 四类端口的并集，去重排序
         self.common_ports = sorted(
             HTTP_PORTS | BANNER_PUSH_PORTS | HANDSHAKE_PORTS | set(SPECIAL_PORTS)
         )
@@ -370,9 +384,10 @@ class PortScanner(BaseModule):
             return None
 
     def worker(self, q, results_map, lock, pbar):
+        """扫描工作线程：从队列取 (IP, 端口) 检测，开放则按 IP 归类写入结果字典（加锁）。"""
         while True:
             task = q.get()
-            if task is None:
+            if task is None:  # 哨兵值，退出线程
                 q.task_done()
                 break
             ip, port = task
@@ -388,6 +403,11 @@ class PortScanner(BaseModule):
                 q.task_done()
 
     def run(self, ip_list):
+        """
+        端口扫描主流程：从存活站点中提取真实 IP（去重、排除 CDN 与无效 IP），
+        用「任务队列 + 多线程」对每个 IP 的每个端口并发检测，返回 {IP: [开放端口...]}。
+        """
+        # 只扫描真实物理 IP：排除 0.0.0.0 占位与走 CDN 的站点
         targets = list({
             item.ip for item in ip_list
             if item.ip != "0.0.0.0" and not item.is_cdn
